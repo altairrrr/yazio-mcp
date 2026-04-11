@@ -1,0 +1,6 @@
+node_modules
+package-lock.json
+.claude
+.env
+.yazio-token.json
+.mcp.json
