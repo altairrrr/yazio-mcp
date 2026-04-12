@@ -10,6 +10,7 @@ import { presets } from "./presets.js";
 import { logQuickEntry } from "./tools/log-quick-entry.js";
 import { updateConsumedItem } from "./tools/update-consumed-item.js";
 import { removeConsumedItem } from "./tools/remove-consumed-item.js";
+import { getDailyMicronutrients } from "./tools/get-daily-micronutrients.js";
 
 const server = new McpServer({
   name: "yazio-mcp",
@@ -229,6 +230,28 @@ server.tool(
   async ({ food_name, date, meal }) => {
     try {
       const result = await removeConsumedItem(food_name, date, meal);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${(error as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  "get_daily_micronutrients",
+  "Get a detailed breakdown of micronutrients (vitamins, minerals, fiber, sugar) consumed for a given day. Fetches each product's full nutritional data and aggregates totals. Requires Yazio Pro. Defaults to today if no date is provided.",
+  {
+    date: z
+      .string()
+      .optional()
+      .describe("Date in ISO format (YYYY-MM-DD). Defaults to today."),
+  },
+  async ({ date }) => {
+    try {
+      const result = await getDailyMicronutrients(date);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
       return {
