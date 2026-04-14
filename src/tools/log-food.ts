@@ -7,12 +7,16 @@ export async function logFood(
   foodName: string,
   quantityGrams: number,
   meal: Meal,
-  date?: string
+  date?: string,
+  locale?: string
 ) {
   const client = getClient();
   const targetDate = date || todayISO();
 
-  const results = await client.products.search({ query: foodName });
+  const results = await client.products.search({
+    query: foodName,
+    ...(locale && { locales: [locale], countries: [locale.toUpperCase()] }),
+  });
 
   if (results.length === 0) {
     return {

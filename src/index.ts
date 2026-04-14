@@ -83,10 +83,14 @@ server.tool(
       .string()
       .optional()
       .describe("Date in ISO format (YYYY-MM-DD). Defaults to today."),
+    locale: z
+      .string()
+      .optional()
+      .describe("Locale for search results (e.g. 'fr', 'en', 'de'). Defaults to all languages."),
   },
-  async ({ food_name, quantity_grams, meal, date }) => {
+  async ({ food_name, quantity_grams, meal, date, locale }) => {
     try {
-      const result = await logFood(food_name, quantity_grams, meal, date);
+      const result = await logFood(food_name, quantity_grams, meal, date, locale);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
       return {
@@ -256,10 +260,11 @@ server.tool(
   {
     query: z.string().describe("Search query (e.g. 'poulet', 'banane', 'skyr')"),
     limit: z.number().positive().optional().describe("Max number of results to return (default 10)"),
+    locale: z.string().optional().describe("Locale for search results (e.g. 'fr', 'en', 'de'). Defaults to all languages."),
   },
-  async ({ query, limit }) => {
+  async ({ query, limit, locale }) => {
     try {
-      const result = await searchFood(query, limit);
+      const result = await searchFood(query, limit, locale);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
       return {
