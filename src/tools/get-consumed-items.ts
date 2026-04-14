@@ -15,6 +15,7 @@ export async function getConsumedItems(date?: string) {
       const scale = amount / 100;
 
       return {
+        product_id: item.product_id,
         name: product?.name ?? item.product_id,
         meal: item.daytime,
         quantity_g: amount,

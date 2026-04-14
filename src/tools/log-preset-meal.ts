@@ -1,12 +1,13 @@
 import { randomUUID } from "crypto";
 import { getClient, todayISO } from "../yazio-client.js";
-import { presets } from "../presets.js";
+import { loadPresets } from "../presets.js";
 
 export async function logPresetMeal(
   presetName: string,
   date?: string,
   variants?: Record<string, string>
 ) {
+  const presets = loadPresets();
   const preset = presets[presetName];
   if (!preset) {
     const available = Object.entries(presets)

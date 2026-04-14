@@ -6,11 +6,20 @@ import { getConsumedItems } from "./tools/get-consumed-items.js";
 import { logFood } from "./tools/log-food.js";
 import { getNutritionWeek } from "./tools/get-nutrition-week.js";
 import { logPresetMeal } from "./tools/log-preset-meal.js";
-import { presets } from "./presets.js";
 import { logQuickEntry } from "./tools/log-quick-entry.js";
 import { updateConsumedItem } from "./tools/update-consumed-item.js";
 import { removeConsumedItem } from "./tools/remove-consumed-item.js";
 import { getDailyMicronutrients } from "./tools/get-daily-micronutrients.js";
+import { listPresets } from "./tools/list-presets.js";
+import { getPreset } from "./tools/get-preset.js";
+import { createPreset } from "./tools/create-preset.js";
+import { updatePreset } from "./tools/update-preset.js";
+import { deletePreset } from "./tools/delete-preset.js";
+import { listFavoriteFoods } from "./tools/list-favorite-foods.js";
+import { addFavoriteFood } from "./tools/add-favorite-food.js";
+import { removeFavoriteFood } from "./tools/remove-favorite-food.js";
+import { searchFood } from "./tools/search-food.js";
+import { presetItemSchema, variantSchema } from "./presets.js";
 
 const server = new McpServer({
   name: "yazio-mcp",
@@ -105,34 +114,13 @@ server.tool(
   }
 );
 
-const presetKeys = Object.keys(presets) as [string, ...string[]];
-
-const variantsDescription = Object.entries(presets)
-  .filter(([, p]) => p.variants)
-  .map(([key, p]) => {
-    const slots = Object.entries(p.variants!).map(
-      ([slot, choices]) =>
-        `${key}.${slot}: ${Object.entries(choices).map(([k, v]) => `"${k}" (${v.name})`).join(", ")}`
-    );
-    return slots.join("; ");
-  })
-  .join(". ");
-
 server.tool(
   "log_preset_meal",
-  `Log the user's pre-saved typical meal to their Yazio diary. The user has pre-configured their usual daily meals as presets. ALWAYS use this tool when the user says things like "mon petit-déj habituel", "my usual breakfast", "comme d'hab", "le déjeuner type", "ajoute mon dîner", "log my usual lunch", etc. Do NOT ask the user what they ate — just use the matching preset directly.
-
-Available presets: ${Object.entries(presets)
-    .map(([key, p]) => `"${key}" (${p.label}: ${p.description})`)
-    .join("; ")}.
-
-Mapping: petit-déjeuner/breakfast → "petit_dej", déjeuner/lunch → "dejeuner", dîner/dinner → "diner", snack/goûter → "snack".
-
-Some items have variants that can be swapped: ${variantsDescription}. If the user mentions a variant (e.g. "avec du saumon", "with greek yogurt", "galettes bjorg"), pass it in the variants parameter. Otherwise use defaults.`,
+  `Log a pre-saved preset meal to the Yazio diary. ALWAYS use this tool when the user says things like "mon petit-déj habituel", "my usual breakfast", "comme d'hab", "le déjeuner type", "ajoute mon dîner", "log my usual lunch", etc. Call list_presets first to see available presets and their variants. Do NOT ask the user what they ate — just use the matching preset directly.`,
   {
     preset: z
-      .enum(presetKeys)
-      .describe("Name of the preset meal to log"),
+      .string()
+      .describe("Key of the preset meal to log (e.g. 'petit_dej', 'dejeuner', 'diner', 'snack')"),
     date: z
       .string()
       .optional()
@@ -252,6 +240,198 @@ server.tool(
   async ({ date }) => {
     try {
       const result = await getDailyMicronutrients(date);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${(error as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  "search_food",
+  "Search the Yazio food database by name. Returns matching products with their Yazio product IDs, macros per 100g, and match score. Use this to find exact product IDs before adding foods to favorites or presets.",
+  {
+    query: z.string().describe("Search query (e.g. 'poulet', 'banane', 'skyr')"),
+    limit: z.number().positive().optional().describe("Max number of results to return (default 10)"),
+  },
+  async ({ query, limit }) => {
+    try {
+      const result = await searchFood(query, limit);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${(error as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// --- Preset CRUD ---
+
+server.tool(
+  "list_presets",
+  "List all saved meal presets with their keys, labels, descriptions, and available variants. Use this to discover what presets exist before logging or modifying them.",
+  {},
+  async () => {
+    try {
+      const result = await listPresets();
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${(error as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  "get_preset",
+  "Get the full details of a specific preset meal, including all items with their Yazio product IDs, amounts, and variant options.",
+  {
+    key: z.string().describe("The preset key (e.g. 'petit_dej', 'dejeuner')"),
+  },
+  async ({ key }) => {
+    try {
+      const result = await getPreset(key);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${(error as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  "create_preset",
+  "Create a new meal preset. Each preset is a reusable meal template with a list of food items (with exact Yazio product IDs) and optional variants.",
+  {
+    key: z.string().describe("Unique key for the preset (e.g. 'petit_dej_leger')"),
+    label: z.string().describe("Display name (e.g. 'Petit-déjeuner léger')"),
+    description: z.string().describe("Short description of the meal contents"),
+    items: z.array(presetItemSchema).describe("List of food items in this preset"),
+    variants: z
+      .record(z.string(), z.record(z.string(), variantSchema))
+      .optional()
+      .describe("Optional variants keyed by slot name, then by choice name"),
+  },
+  async ({ key, label, description, items, variants }) => {
+    try {
+      const result = await createPreset(key, label, description, items, variants);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${(error as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  "update_preset",
+  "Update an existing meal preset. You can modify its label, description, items, or variants. Only provided fields are updated.",
+  {
+    key: z.string().describe("The preset key to update"),
+    label: z.string().optional().describe("New display name"),
+    description: z.string().optional().describe("New description"),
+    items: z.array(presetItemSchema).optional().describe("New list of food items (replaces all items)"),
+    variants: z
+      .record(z.string(), z.record(z.string(), variantSchema))
+      .optional()
+      .describe("New variants (replaces all variants)"),
+  },
+  async ({ key, label, description, items, variants }) => {
+    try {
+      const result = await updatePreset(key, label, description, items, variants);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${(error as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  "delete_preset",
+  "Delete a meal preset by its key.",
+  {
+    key: z.string().describe("The preset key to delete"),
+  },
+  async ({ key }) => {
+    try {
+      const result = await deletePreset(key);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${(error as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// --- Favorite Foods ---
+
+server.tool(
+  "list_favorite_foods",
+  "List all favorite foods saved by the user. Each favorite has a Yazio product ID, default amount, default meal, and tags (e.g. 'protein', 'carb', 'fruit', 'fat'). Use this to suggest foods when building or modifying presets, or to help the user make nutritional choices.",
+  {
+    tag: z.string().optional().describe("Filter favorites by tag (e.g. 'protein', 'fruit')"),
+  },
+  async ({ tag }) => {
+    try {
+      const result = await listFavoriteFoods(tag);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${(error as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  "add_favorite_food",
+  "Add a food to the user's favorites list. Stores the exact Yazio product ID so it can be reliably reused in presets or logged directly. Tags help categorize the food (e.g. 'protein', 'carb', 'vegetable', 'fruit', 'fat', 'dairy').",
+  {
+    product_id: z.string().describe("Yazio product ID"),
+    name: z.string().describe("Display name of the food"),
+    default_amount: z.number().positive().describe("Default amount in grams"),
+    default_meal: z.enum(["breakfast", "lunch", "dinner", "snack"]).describe("Default meal slot"),
+    tags: z.array(z.string()).describe("Tags for categorization (e.g. ['protein', 'meat'])"),
+  },
+  async ({ product_id, name, default_amount, default_meal, tags }) => {
+    try {
+      const result = await addFavoriteFood(product_id, name, default_amount, default_meal, tags);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${(error as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  "remove_favorite_food",
+  "Remove a food from the user's favorites list by its Yazio product ID.",
+  {
+    product_id: z.string().describe("Yazio product ID to remove"),
+  },
+  async ({ product_id }) => {
+    try {
+      const result = await removeFavoriteFood(product_id);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
       return {

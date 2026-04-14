@@ -45,6 +45,7 @@ export async function logFood(
 
   return {
     success: true,
+    product_id: best.product_id,
     matched_food: best.name,
     producer: best.producer || undefined,
     is_verified: best.is_verified,

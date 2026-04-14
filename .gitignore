@@ -4,3 +4,4 @@ package-lock.json
 .env
 .yazio-token.json
 .mcp.json
+data/
