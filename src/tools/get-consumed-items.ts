@@ -1,4 +1,33 @@
-import { getClient, todayISO } from "../yazio-client.js";
+import { getClient, getYazioToken, todayISO } from "../yazio-client.js";
+
+const API_BASE = "https://yzapi.yazio.com/v15";
+
+type RecipeData = {
+  name?: string;
+  nutrients?: Record<string, number>;
+  // some endpoints nest nutrients per-portion under a different key
+  [key: string]: unknown;
+};
+
+let _recipeShapeLogged = false;
+
+async function fetchRecipe(recipeId: string): Promise<RecipeData | null> {
+  const token = await getYazioToken();
+  const headers = { Authorization: `Bearer ${token.access_token}` };
+
+  for (const path of [`/user/recipes/${recipeId}`, `/recipes/${recipeId}`]) {
+    const res = await fetch(`${API_BASE}${path}`, { headers });
+    if (res.ok) {
+      const data = await res.json() as RecipeData;
+      if (!_recipeShapeLogged) {
+        process.stderr.write(`[yazio-mcp] recipe shape (${path}): ${JSON.stringify(data)}\n`);
+        _recipeShapeLogged = true;
+      }
+      return data;
+    }
+  }
+  return null;
+}
 
 type SimpleProduct = {
   id: string;
@@ -71,19 +100,24 @@ export async function getConsumedItems(date?: string) {
     fat_g: nutrientVal(item.nutrients, "nutrient.fat"),
   }));
 
-  // recipe_portions have no inline nutrients — would need a separate recipe fetch
-  const recipeItems = (consumed.recipe_portions as RecipePortion[]).map((item) => ({
-    id: item.id,
-    product_id: item.recipe_id,
-    name: `Recipe (${item.recipe_id})`,
-    meal: item.daytime,
-    quantity_g: null as number | null,
-    serving: `${item.portion_count} portion${item.portion_count !== 1 ? "s" : ""}`,
-    calories: null as number | null,
-    protein_g: null as number | null,
-    carbs_g: null as number | null,
-    fat_g: null as number | null,
-  }));
+  const recipeItems = await Promise.all(
+    (consumed.recipe_portions as RecipePortion[]).map(async (item) => {
+      const recipe = await fetchRecipe(item.recipe_id);
+      const n = recipe?.nutrients ?? null;
+      return {
+        id: item.id,
+        product_id: item.recipe_id,
+        name: recipe?.name ?? `Recipe (${item.recipe_id})`,
+        meal: item.daytime,
+        quantity_g: null as number | null,
+        serving: `${item.portion_count} portion${item.portion_count !== 1 ? "s" : ""}`,
+        calories: n ? nutrientVal(n, "energy.energy") : null,
+        protein_g: n ? nutrientVal(n, "nutrient.protein") : null,
+        carbs_g: n ? nutrientVal(n, "nutrient.carb") : null,
+        fat_g: n ? nutrientVal(n, "nutrient.fat") : null,
+      };
+    })
+  );
 
   return {
     date: targetDate,
