@@ -3,30 +3,17 @@ import { getClient, getYazioToken, todayISO } from "../yazio-client.js";
 const API_BASE = "https://yzapi.yazio.com/v15";
 
 type RecipeData = {
-  name?: string;
-  nutrients?: Record<string, number>;
-  // some endpoints nest nutrients per-portion under a different key
-  [key: string]: unknown;
+  name: string;
+  portion_count: number;
+  // nutrients are per portion
+  nutrients: Record<string, number>;
 };
-
-let _recipeShapeLogged = false;
 
 async function fetchRecipe(recipeId: string): Promise<RecipeData | null> {
   const token = await getYazioToken();
   const headers = { Authorization: `Bearer ${token.access_token}` };
-
-  for (const path of [`/user/recipes/${recipeId}`, `/recipes/${recipeId}`]) {
-    const res = await fetch(`${API_BASE}${path}`, { headers });
-    if (res.ok) {
-      const data = await res.json() as RecipeData;
-      if (!_recipeShapeLogged) {
-        process.stderr.write(`[yazio-mcp] recipe shape (${path}): ${JSON.stringify(data)}\n`);
-        _recipeShapeLogged = true;
-      }
-      return data;
-    }
-  }
-  return null;
+  const res = await fetch(`${API_BASE}/recipes/${recipeId}`, { headers });
+  return res.ok ? (await res.json() as RecipeData) : null;
 }
 
 type SimpleProduct = {
@@ -104,6 +91,8 @@ export async function getConsumedItems(date?: string) {
     (consumed.recipe_portions as RecipePortion[]).map(async (item) => {
       const recipe = await fetchRecipe(item.recipe_id);
       const n = recipe?.nutrients ?? null;
+      // nutrients from the API are per portion; scale by portions consumed
+      const scale = item.portion_count;
       return {
         id: item.id,
         product_id: item.recipe_id,
@@ -111,10 +100,10 @@ export async function getConsumedItems(date?: string) {
         meal: item.daytime,
         quantity_g: null as number | null,
         serving: `${item.portion_count} portion${item.portion_count !== 1 ? "s" : ""}`,
-        calories: n ? nutrientVal(n, "energy.energy") : null,
-        protein_g: n ? nutrientVal(n, "nutrient.protein") : null,
-        carbs_g: n ? nutrientVal(n, "nutrient.carb") : null,
-        fat_g: n ? nutrientVal(n, "nutrient.fat") : null,
+        calories: n ? Math.round(n["energy.energy"] * scale * 10) / 10 : null,
+        protein_g: n ? Math.round(n["nutrient.protein"] * scale * 10) / 10 : null,
+        carbs_g: n ? Math.round(n["nutrient.carb"] * scale * 10) / 10 : null,
+        fat_g: n ? Math.round(n["nutrient.fat"] * scale * 10) / 10 : null,
       };
     })
   );
