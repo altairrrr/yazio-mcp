@@ -12,7 +12,7 @@ export async function getConsumedItems(date?: string) {
     consumed.products.map(async (item) => {
       const product = await client.products.get(item.product_id);
       const amount = item.amount ?? 0;
-      const scale = amount / 100;
+      const scale = amount;
 
       return {
         product_id: item.product_id,

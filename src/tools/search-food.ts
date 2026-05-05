@@ -14,10 +14,10 @@ export async function searchFood(query: string, limit?: number, locale?: string)
     is_verified: r.is_verified,
     score: r.score,
     per_100g: {
-      calories: r.nutrients["energy.energy"],
-      protein_g: r.nutrients["nutrient.protein"],
-      carbs_g: r.nutrients["nutrient.carb"],
-      fat_g: r.nutrients["nutrient.fat"],
+      calories: Math.round(r.nutrients["energy.energy"] * 100 * 10) / 10,
+      protein_g: Math.round(r.nutrients["nutrient.protein"] * 100 * 10) / 10,
+      carbs_g: Math.round(r.nutrients["nutrient.carb"] * 100 * 10) / 10,
+      fat_g: Math.round(r.nutrients["nutrient.fat"] * 100 * 10) / 10,
     },
   }));
 

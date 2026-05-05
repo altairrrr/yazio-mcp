@@ -27,7 +27,7 @@ export async function logFood(
 
   const best = results[0];
   const score = best.score;
-  const scale = quantityGrams / 100;
+  const scale = quantityGrams;
 
   const macros = {
     calories: Math.round(best.nutrients["energy.energy"] * scale * 10) / 10,
