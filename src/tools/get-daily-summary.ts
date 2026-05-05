@@ -36,15 +36,18 @@ export async function getDailySummary(date?: string) {
       fat_g: summary.goals["nutrient.fat"],
     },
     by_meal: Object.fromEntries(
-      (["breakfast", "lunch", "dinner", "snack"] as const).map((meal) => [
-        meal,
-        {
-          calories: summary.meals[meal].nutrients["energy.energy"],
-          protein_g: summary.meals[meal].nutrients["nutrient.protein"],
-          carbs_g: summary.meals[meal].nutrients["nutrient.carb"],
-          fat_g: summary.meals[meal].nutrients["nutrient.fat"],
-        },
-      ])
+      (["breakfast", "lunch", "dinner", "snack"] as const).map((meal) => {
+        const n = summary.meals[meal].nutrients;
+        return [
+          meal,
+          {
+            calories: Math.round(n["energy.energy"] * 10) / 10,
+            protein_g: Math.round(n["nutrient.protein"] * 10) / 10,
+            carbs_g: Math.round(n["nutrient.carb"] * 10) / 10,
+            fat_g: Math.round(n["nutrient.fat"] * 10) / 10,
+          },
+        ];
+      })
     ),
   };
 }
