@@ -1,11 +1,16 @@
 services:
   yazio-mcp:
-    build: .
+    image: node:20-alpine
     container_name: yazio-mcp
     restart: unless-stopped
+    working_dir: /app
+    command: node_modules/.bin/tsx src/index.ts
+    environment:
+      - MCP_TRANSPORT=streamable-http
+      - MCP_PORT=8000
     env_file:
       - .env
-    ports:
-      - "8000:8000"
     volumes:
-      - ./data:/app/data
+      - .:/app
+    ports:
+      - "3841:8000"
