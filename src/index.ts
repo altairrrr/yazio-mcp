@@ -21,12 +21,13 @@ import { removeFavoriteFood } from "./tools/remove-favorite-food.js";
 import { searchFood } from "./tools/search-food.js";
 import { presetItemSchema, variantSchema } from "./presets.js";
 
-const server = new McpServer({
-  name: "yazio-mcp",
-  version: "1.0.0",
-});
+function buildServer() {
+  const server = new McpServer({
+    name: "yazio-mcp",
+    version: "1.0.0",
+  });
 
-server.tool(
+  server.tool(
   "get_daily_summary",
   "Get total calories, protein, carbs, and fat for a given day, broken down by meal. Also returns daily goals. Defaults to today if no date is provided.",
   {
@@ -447,9 +448,45 @@ server.tool(
   }
 );
 
+  return server;
+}
+
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  const transportType = process.env.MCP_TRANSPORT ?? "stdio";
+
+  if (transportType === "streamable-http") {
+    const { createServer } = await import("node:http");
+    const { StreamableHTTPServerTransport } = await import(
+      "@modelcontextprotocol/sdk/server/streamableHttp.js"
+    );
+    const port = parseInt(process.env.MCP_PORT ?? "8000");
+
+    createServer(async (req, res) => {
+      if (req.url === "/health") {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("ok");
+        return;
+      }
+      if (req.method === "DELETE") { res.writeHead(200); res.end(); return; }
+      if (req.url !== "/mcp" || req.method !== "POST") {
+        res.writeHead(404); res.end("Not found"); return;
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      const server = buildServer();
+      await server.connect(transport);
+      await transport.handleRequest(req, res, body);
+    }).listen(port, "0.0.0.0", () => {
+      process.stderr.write(`Yazio MCP server running on port ${port}\n`);
+    });
+
+  } else {
+    const server = buildServer();
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+  }
 }
 
 main().catch((error) => {
