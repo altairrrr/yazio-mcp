@@ -14,7 +14,6 @@ export interface Token {
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TOKEN_PATH = join(PROJECT_ROOT, ".yazio-token.json");
 
-
 function loadCachedToken(): Token | null {
   try {
     const data = JSON.parse(readFileSync(TOKEN_PATH, "utf-8"));
@@ -29,12 +28,22 @@ function saveCachedToken(token: Token): void {
   writeFileSync(TOKEN_PATH, JSON.stringify(token, null, 2));
 }
 
+// Shared in-memory token updated by both getClient() and getYazioToken()
+let activeToken: Token | null = null;
+
+function handleRefresh({ token }: { token: Token }) {
+  activeToken = token;
+  saveCachedToken(token);
+}
+
 let clientInstance: Yazio | null = null;
 
 export function getClient(): Yazio {
   if (clientInstance) return clientInstance;
 
   const cached = loadCachedToken();
+  if (cached) activeToken = cached;
+
   const username = process.env.YAZIO_USERNAME;
   const password = process.env.YAZIO_PASSWORD;
   const accessToken = process.env.YAZIO_ACCESS_TOKEN;
@@ -49,11 +58,8 @@ export function getClient(): Yazio {
       expires_in: 3600,
       expires_at: Math.floor(Date.now() / 1000) + 3600,
     };
-
-    clientInstance = new Yazio({
-      token,
-      onRefresh: ({ token }: { token: Token }) => saveCachedToken(token),
-    });
+    activeToken = token;
+    clientInstance = new Yazio({ token, onRefresh: handleRefresh });
     return clientInstance;
   }
 
@@ -68,12 +74,12 @@ export function getClient(): Yazio {
     clientInstance = new Yazio({
       token: cached,
       credentials: { username, password },
-      onRefresh: ({ token }: { token: Token }) => saveCachedToken(token),
+      onRefresh: handleRefresh,
     });
   } else {
     clientInstance = new Yazio({
       credentials: { username, password },
-      onRefresh: ({ token }: { token: Token }) => saveCachedToken(token),
+      onRefresh: handleRefresh,
     });
   }
 
@@ -83,6 +89,11 @@ export function getClient(): Yazio {
 let authInstance: YazioAuth | null = null;
 
 export async function getYazioToken(): Promise<Token> {
+  // Reuse the token kept current by getClient() when possible
+  if (activeToken && Date.now() / 1000 < activeToken.expires_at - 60) {
+    return activeToken;
+  }
+
   if (!authInstance) {
     const cached = loadCachedToken();
     const username = process.env.YAZIO_USERNAME;
@@ -98,21 +109,18 @@ export async function getYazioToken(): Promise<Token> {
         expires_in: 3600,
         expires_at: Math.floor(Date.now() / 1000) + 3600,
       };
-      authInstance = new YazioAuth({
-        token,
-        onRefresh: ({ token }: { token: Token }) => saveCachedToken(token),
-      });
+      authInstance = new YazioAuth({ token, onRefresh: handleRefresh });
     } else if (username && password) {
       if (cached) {
         authInstance = new YazioAuth({
           token: cached,
           credentials: { username, password },
-          onRefresh: ({ token }: { token: Token }) => saveCachedToken(token),
+          onRefresh: handleRefresh,
         });
       } else {
         authInstance = new YazioAuth({
           credentials: { username, password },
-          onRefresh: ({ token }: { token: Token }) => saveCachedToken(token),
+          onRefresh: handleRefresh,
         });
       }
     } else {
@@ -121,7 +129,10 @@ export async function getYazioToken(): Promise<Token> {
       );
     }
   }
-  return authInstance.authenticate();
+
+  const token = await authInstance.authenticate();
+  activeToken = token;
+  return token;
 }
 
 export function todayISO(): string {
