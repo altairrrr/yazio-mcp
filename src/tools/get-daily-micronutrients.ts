@@ -87,9 +87,17 @@ export async function getDailyMicronutrients(date?: string) {
     else other[n.label] = formatted;
   }
 
+  const skipped =
+    (consumed.simple_products as unknown[]).length +
+    (consumed.recipe_portions as unknown[]).length;
+
   return {
     date: targetDate,
-    items_counted: consumed.products.length,
+    items_analyzed: consumed.products.length,
+    items_total: consumed.products.length + skipped,
+    ...(skipped > 0 && {
+      note: `${skipped} item(s) excluded (quick entries and recipes carry no per-micronutrient data)`,
+    }),
     vitamins,
     minerals,
     other,
