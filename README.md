@@ -100,9 +100,15 @@ Once connected, try asking Claude:
 ## How it works
 
 - **Auth**: reads credentials from environment variables, authenticates via the [yazio](https://www.npmjs.com/package/yazio) npm package
-- **Token caching**: the auth token is cached in `.yazio-token.json` to avoid re-authenticating on every call. This file is auto-generated and can be safely deleted.
+- **Token caching**: the auth token is cached in `.yazio-token.json` to avoid re-authenticating on every call. An expired token is replaced automatically. If Yazio rejects a token with HTTP 401, the server clears its cache, logs in again with `YAZIO_USERNAME` and `YAZIO_PASSWORD`, and retries that API request once. This file is auto-generated and can be safely deleted.
 - **Quick entries**: restaurant meals and estimated macros are logged as "simple products" via the Yazio API, so they show up in the app just like manual entries
 - **Presets**: pre-configured in `src/presets.ts` with product IDs from the Yazio database. Fork and customize for your own meals.
+
+### Troubleshooting 401 errors
+
+Check which server ChatGPT is calling: this project exposes `get_daily_summary` and `get_consumed_items`. The separate `fliptheweb/yazio-mcp` project exposes `get_user_daily_summary` and `get_user_consumed_items`. Changes to this checkout affect only deployments of this project.
+
+For this server, ensure the running container has `YAZIO_USERNAME` and `YAZIO_PASSWORD` configured. Redeploy or restart it after updating the code. A 401 on `/oauth/token` means the login itself failed; a 401 on another `/v15` route means Yazio rejected a bearer token. The server retries the latter once with a fresh login. Do not paste credentials or token cache contents into logs or support messages.
 
 ## File structure
 

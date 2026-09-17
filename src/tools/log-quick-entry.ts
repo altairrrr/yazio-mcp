@@ -1,7 +1,5 @@
 import { randomUUID } from "crypto";
-import { getYazioToken, todayISO } from "../yazio-client.js";
-
-const API_BASE = "https://yzapi.yazio.com/v15";
+import { authorizedFetch, todayISO } from "../yazio-client.js";
 
 type Meal = "breakfast" | "lunch" | "dinner" | "snack";
 
@@ -14,7 +12,6 @@ export async function logQuickEntry(
   meal: Meal,
   date?: string
 ) {
-  const token = await getYazioToken();
   const targetDate = date || todayISO();
 
   const body = {
@@ -36,10 +33,9 @@ export async function logQuickEntry(
     ],
   };
 
-  const res = await fetch(`${API_BASE}/user/consumed-items`, {
+  const res = await authorizedFetch("/user/consumed-items", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token.access_token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),

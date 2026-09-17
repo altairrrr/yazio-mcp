@@ -1,6 +1,4 @@
-import { getClient, getYazioToken, todayISO } from "../yazio-client.js";
-
-const API_BASE = "https://yzapi.yazio.com/v15";
+import { authorizedFetch, getClient, todayISO } from "../yazio-client.js";
 
 type RecipeData = {
   name: string;
@@ -10,9 +8,7 @@ type RecipeData = {
 };
 
 async function fetchRecipe(recipeId: string): Promise<RecipeData | null> {
-  const token = await getYazioToken();
-  const headers = { Authorization: `Bearer ${token.access_token}` };
-  const res = await fetch(`${API_BASE}/recipes/${recipeId}`, { headers });
+  const res = await authorizedFetch(`/recipes/${recipeId}`);
   return res.ok ? (await res.json() as RecipeData) : null;
 }
 

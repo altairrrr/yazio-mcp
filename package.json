@@ -5,7 +5,8 @@
   "main": "src/index.ts",
   "scripts": {
     "start": "node --env-file=.env node_modules/.bin/tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/auth-401.test.mjs tests/auth-concurrency.test.mjs tests/auth-direct-token.test.mjs tests/auth-second-401.test.mjs"
   },
   "keywords": ["mcp", "yazio", "nutrition"],
   "author": "",

@@ -1,5 +1,5 @@
 import { Yazio, YazioAuth } from "yazio";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, writeFileSync, unlinkSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -8,16 +8,25 @@ export interface Token {
   access_token: string;
   refresh_token: string;
   expires_in: number;
+  // The yazio package stores and checks this timestamp in milliseconds.
   expires_at: number;
 }
 
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const TOKEN_PATH = join(PROJECT_ROOT, ".yazio-token.json");
+const TOKEN_PATH = process.env.YAZIO_TOKEN_PATH ?? join(PROJECT_ROOT, ".yazio-token.json");
+const API_BASE = "https://yzapi.yazio.com/v15";
 
 function loadCachedToken(): Token | null {
   try {
-    const data = JSON.parse(readFileSync(TOKEN_PATH, "utf-8"));
-    if (data.expires_at && Date.now() / 1000 < data.expires_at - 60) {
+    const data: Token = JSON.parse(readFileSync(TOKEN_PATH, "utf-8"));
+    if (
+      typeof data.token_type === "string" &&
+      typeof data.access_token === "string" &&
+      typeof data.refresh_token === "string" &&
+      typeof data.expires_in === "number" &&
+      typeof data.expires_at === "number" &&
+      data.expires_at > Date.now() + 60_000
+    ) {
       return data;
     }
   } catch {}
@@ -28,111 +37,173 @@ function saveCachedToken(token: Token): void {
   writeFileSync(TOKEN_PATH, JSON.stringify(token, null, 2));
 }
 
-// Shared in-memory token updated by both getClient() and getYazioToken()
-let activeToken: Token | null = null;
+let authInstance: YazioAuth | null = null;
+let clientInstance: Yazio | null = null;
+let clientProxy: Yazio | null = null;
+let ignoreCachedToken = false;
 
-function handleRefresh({ token }: { token: Token }) {
-  activeToken = token;
-  saveCachedToken(token);
+function hasCredentials(): boolean {
+  return !!(process.env.YAZIO_USERNAME && process.env.YAZIO_PASSWORD);
 }
 
-let clientInstance: Yazio | null = null;
-
-export function getClient(): Yazio {
-  if (clientInstance) return clientInstance;
-
-  const cached = loadCachedToken();
-  if (cached) activeToken = cached;
+function getAuth(): YazioAuth {
+  if (authInstance) return authInstance;
 
   const username = process.env.YAZIO_USERNAME;
   const password = process.env.YAZIO_PASSWORD;
   const accessToken = process.env.YAZIO_ACCESS_TOKEN;
   const refreshToken = process.env.YAZIO_REFRESH_TOKEN;
 
-  // Mode 1: Token direct (pour les comptes Sign in with Apple)
-  if (accessToken) {
-    const token: Token = cached ?? {
-      token_type: "Bearer",
-      access_token: accessToken,
-      refresh_token: refreshToken ?? "",
-      expires_in: 3600,
-      expires_at: Math.floor(Date.now() / 1000) + 3600,
-    };
-    activeToken = token;
-    clientInstance = new Yazio({ token, onRefresh: handleRefresh });
-    return clientInstance;
-  }
-
-  // Mode 2: Credentials classiques (email + password)
-  if (!username || !password) {
-    throw new Error(
-      "Set either YAZIO_ACCESS_TOKEN (for Apple Sign-In accounts) or both YAZIO_USERNAME and YAZIO_PASSWORD"
-    );
-  }
-
-  if (cached) {
-    clientInstance = new Yazio({
-      token: cached,
+  let auth: YazioAuth;
+  if (username && password) {
+    const cached = ignoreCachedToken ? null : loadCachedToken();
+    auth = new YazioAuth({
+      ...(cached && { token: cached }),
       credentials: { username, password },
-      onRefresh: handleRefresh,
+      onRefresh: ({ token }: { token: Token }) => {
+        ignoreCachedToken = false;
+        saveCachedToken(token);
+      },
     });
-  } else {
-    clientInstance = new Yazio({
-      credentials: { username, password },
-      onRefresh: handleRefresh,
-    });
-  }
-
-  return clientInstance;
-}
-
-let authInstance: YazioAuth | null = null;
-
-export async function getYazioToken(): Promise<Token> {
-  // Reuse the token kept current by getClient() when possible
-  if (activeToken && Date.now() / 1000 < activeToken.expires_at - 60) {
-    return activeToken;
-  }
-
-  if (!authInstance) {
-    const cached = loadCachedToken();
-    const username = process.env.YAZIO_USERNAME;
-    const password = process.env.YAZIO_PASSWORD;
-    const accessToken = process.env.YAZIO_ACCESS_TOKEN;
-    const refreshToken = process.env.YAZIO_REFRESH_TOKEN;
-
-    if (accessToken) {
-      const token: Token = cached ?? {
+  } else if (accessToken) {
+    // The installed yazio package cannot refresh a token-only session.
+    // Prefer the configured token so rotating it does not reuse an older cache.
+    auth = new YazioAuth({
+      token: {
         token_type: "Bearer",
         access_token: accessToken,
         refresh_token: refreshToken ?? "",
         expires_in: 3600,
-        expires_at: Math.floor(Date.now() / 1000) + 3600,
-      };
-      authInstance = new YazioAuth({ token, onRefresh: handleRefresh });
-    } else if (username && password) {
-      if (cached) {
-        authInstance = new YazioAuth({
-          token: cached,
-          credentials: { username, password },
-          onRefresh: handleRefresh,
-        });
-      } else {
-        authInstance = new YazioAuth({
-          credentials: { username, password },
-          onRefresh: handleRefresh,
-        });
-      }
-    } else {
-      throw new Error(
-        "Set either YAZIO_ACCESS_TOKEN or both YAZIO_USERNAME and YAZIO_PASSWORD"
-      );
-    }
+        expires_at: Date.now() + 3_600_000,
+      },
+    });
+  } else {
+    throw new Error(
+      "Set either YAZIO_ACCESS_TOKEN or both YAZIO_USERNAME and YAZIO_PASSWORD"
+    );
   }
 
-  const token = await authInstance.authenticate();
-  activeToken = token;
-  return token;
+  // The package does not merge concurrent authentication requests. A weekly
+  // summary can otherwise issue several simultaneous login requests.
+  const authenticate = auth.authenticate;
+  let pending: Promise<Token> | null = null;
+  auth.authenticate = () => {
+    if (!pending) {
+      pending = authenticate().finally(() => { pending = null; });
+    }
+    return pending;
+  };
+
+  authInstance = auth;
+  return auth;
+}
+
+function getRawClient(): Yazio {
+  if (!clientInstance) clientInstance = new Yazio(getAuth());
+  return clientInstance;
+}
+
+export function getClient(): Yazio {
+  if (!clientProxy) {
+    // Each library method is one API request. Wrap it at this boundary so a
+    // rejected token can be replaced without repeating an entire tool action
+    // (which might already have written some diary entries).
+    clientProxy = new Proxy({} as Yazio, {
+      get(_target, service) {
+        if (service !== "user" && service !== "products") {
+          return Reflect.get(getRawClient(), service);
+        }
+        return new Proxy({}, {
+          get(_serviceTarget, method) {
+            const member = Reflect.get(Reflect.get(getRawClient(), service), method);
+            if (typeof member !== "function") return member;
+            return (...args: unknown[]) => withYazioClientRetry(async (client) => {
+              const instance = Reflect.get(client, service);
+              return Reflect.apply(Reflect.get(instance, method), instance, args);
+            });
+          },
+        });
+      },
+    });
+  }
+  return clientProxy;
+}
+
+export async function getYazioToken(): Promise<Token> {
+  try {
+    return await getAuth().authenticate();
+  } catch (error) {
+    if (process.env.YAZIO_ACCESS_TOKEN && !hasCredentials()) {
+      throw new Error(
+        "YAZIO_ACCESS_TOKEN has expired. Replace it or configure YAZIO_USERNAME and YAZIO_PASSWORD for automatic login.",
+        { cause: error }
+      );
+    }
+    throw error;
+  }
+}
+
+function isUnauthorized(error: unknown): boolean {
+  return error instanceof Error && /\(401(?:\s|\))/.test(error.message);
+}
+
+function invalidateAuth(expected: YazioAuth): void {
+  if (authInstance !== expected) return;
+  authInstance = null;
+  clientInstance = null;
+  ignoreCachedToken = true;
+  try { unlinkSync(TOKEN_PATH); } catch {}
+}
+
+function reauthUnavailable(error: unknown): Error {
+  return new Error(
+    "Yazio rejected YAZIO_ACCESS_TOKEN (401). Replace it or configure YAZIO_USERNAME and YAZIO_PASSWORD for automatic login.",
+    { cause: error }
+  );
+}
+
+function renewedTokenRejected(error: unknown): Error {
+  return new Error(
+    "Yazio rejected a freshly issued token (401 Unauthorized). Check the Yazio login and API compatibility.",
+    { cause: error }
+  );
+}
+
+export async function withYazioClientRetry<T>(request: (client: Yazio) => Promise<T>): Promise<T> {
+  const auth = getAuth();
+  try {
+    return await request(getRawClient());
+  } catch (error) {
+    if (!isUnauthorized(error) || /\/oauth\/token/.test((error as Error).message)) throw error;
+    if (!hasCredentials()) throw reauthUnavailable(error);
+    invalidateAuth(auth);
+    try {
+      return await request(getRawClient());
+    } catch (retryError) {
+      if (isUnauthorized(retryError) && !/\/oauth\/token/.test((retryError as Error).message)) {
+        throw renewedTokenRejected(retryError);
+      }
+      throw retryError;
+    }
+  }
+}
+
+export async function authorizedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const request = async (): Promise<Response> => {
+    const token = await getYazioToken();
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", `Bearer ${token.access_token}`);
+    return fetch(`${API_BASE}${path}`, { ...init, headers });
+  };
+
+  const auth = getAuth();
+  const response = await request();
+  if (response.status !== 401) return response;
+  if (!hasCredentials()) throw reauthUnavailable(new Error("401 Unauthorized"));
+  invalidateAuth(auth);
+  const retried = await request();
+  if (retried.status === 401) throw renewedTokenRejected(new Error("401 Unauthorized"));
+  return retried;
 }
 
 export function todayISO(): string {
